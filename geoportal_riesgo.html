@@ -1,0 +1,904 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Geoportal — Recolección de Eventos: Inundaciones y Deslizamientos</title>
+
+<!-- Leaflet CSS -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+<!-- Leaflet MarkerCluster -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css"/>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.css"/>
+<!-- Google Fonts -->
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Inter:wght@300;400;500;600&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<!-- Font Awesome -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/>
+
+<style>
+/* ───────────── RESET & TOKENS ───────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg-dark:       #0d1117;
+  --bg-panel:      #13171f;
+  --bg-card:       #1c2230;
+  --bg-card-hover: #232c3d;
+  --border:        #2a3347;
+  --border-glow:   #3a4a6a;
+
+  --flood:         #00b4d8;
+  --flood-dim:     #0077a3;
+  --flood-glow:    rgba(0,180,216,.35);
+  --slide:         #e07b39;
+  --slide-dim:     #a0541a;
+  --slide-glow:    rgba(224,123,57,.35);
+
+  --danger:        #ff4444;
+  --warn:          #ffd166;
+  --safe:          #06d6a0;
+  --text-primary:  #e8eaf0;
+  --text-secondary:#9ba3b8;
+  --text-dim:      #5a6480;
+  --parchment:     #c9b99a;
+  --accent-gold:   #f4a300;
+
+  --font-display: 'Oswald', sans-serif;
+  --font-body:    'Inter', sans-serif;
+  --font-mono:    'Roboto Mono', monospace;
+  --panel-w: 300px;
+  --topbar-h: 56px;
+}
+
+html, body { height: 100%; overflow: hidden; background: var(--bg-dark); color: var(--text-primary); font-family: var(--font-body); }
+
+/* ───────────── TOPBAR ───────────── */
+#topbar {
+  position: fixed; top: 0; left: 0; right: 0; height: var(--topbar-h);
+  background: linear-gradient(90deg, #090d14 0%, #111827 60%, #090d14 100%);
+  border-bottom: 1px solid var(--border-glow);
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 16px; z-index: 1100;
+  box-shadow: 0 2px 20px rgba(0,0,0,.6);
+}
+#topbar .logo-area {
+  display: flex; align-items: center; gap: 12px;
+}
+#topbar .logo-icon {
+  width: 36px; height: 36px;
+  background: linear-gradient(135deg, var(--flood) 0%, var(--slide) 100%);
+  border-radius: 6px; display: grid; place-items: center; font-size: 18px; flex-shrink: 0;
+  box-shadow: 0 0 12px var(--flood-glow);
+}
+#topbar h1 {
+  font-family: var(--font-display); font-size: 15px; font-weight: 600; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--text-primary); line-height: 1.2;
+}
+#topbar h1 span { color: var(--parchment); font-weight: 400; font-size: 11px; display: block; letter-spacing: .12em; }
+
+.topbar-right { display: flex; align-items: center; gap: 12px; }
+
+.badge-live {
+  display: flex; align-items: center; gap: 5px;
+  background: rgba(255,68,68,.12); border: 1px solid rgba(255,68,68,.3);
+  border-radius: 20px; padding: 3px 10px; font-size: 11px; font-weight: 600;
+  color: var(--danger); letter-spacing: .06em; font-family: var(--font-display);
+}
+.badge-live .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--danger); animation: pulse-dot 1.4s infinite; }
+@keyframes pulse-dot { 0%,100%{opacity:1;} 50%{opacity:.3;} }
+
+.topbar-stat { text-align: center; }
+.topbar-stat .val { font-family: var(--font-display); font-size: 18px; font-weight: 700; line-height: 1; }
+.topbar-stat .lbl { font-size: 9px; color: var(--text-secondary); letter-spacing: .1em; text-transform: uppercase; }
+.topbar-stat.flood .val { color: var(--flood); }
+.topbar-stat.slide .val { color: var(--slide); }
+.topbar-divider { width: 1px; height: 30px; background: var(--border); }
+
+/* ───────────── LAYOUT ───────────── */
+#app {
+  position: fixed; top: var(--topbar-h); left: 0; right: 0; bottom: 0;
+  display: flex;
+}
+
+/* ───────────── LEFT PANEL ───────────── */
+#panel-left {
+  width: var(--panel-w); flex-shrink: 0;
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border);
+  display: flex; flex-direction: column; overflow: hidden;
+  transition: width .3s ease;
+  z-index: 1000;
+}
+#panel-left.collapsed { width: 0; }
+
+.panel-section { border-bottom: 1px solid var(--border); }
+.panel-header {
+  padding: 12px 16px;
+  display: flex; align-items: center; justify-content: space-between;
+  cursor: pointer; user-select: none;
+}
+.panel-header h3 {
+  font-family: var(--font-display); font-size: 11px; font-weight: 600;
+  letter-spacing: .12em; text-transform: uppercase; color: var(--text-secondary);
+}
+.panel-header .chevron { color: var(--text-dim); font-size: 10px; transition: transform .2s; }
+.panel-header.open .chevron { transform: rotate(180deg); }
+.panel-body { overflow: hidden; }
+
+/* Bases cartográficas */
+.base-options { padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.base-btn {
+  display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+  border: 1px solid var(--border); border-radius: 6px;
+  background: transparent; color: var(--text-primary);
+  cursor: pointer; font-family: var(--font-body); font-size: 12px;
+  transition: all .2s;
+}
+.base-btn:hover { background: var(--bg-card-hover); border-color: var(--border-glow); }
+.base-btn.active { background: rgba(0,180,216,.08); border-color: var(--flood); color: var(--flood); }
+.base-btn .ico { width: 28px; height: 20px; border-radius: 3px; flex-shrink: 0; }
+.ico-sat { background: linear-gradient(135deg,#1a3a1a,#2d5a2d,#4a8a1a); }
+.ico-osm { background: linear-gradient(135deg,#b8d4f0,#85b8e8,#5a9cd4); }
+.ico-dark { background: linear-gradient(135deg,#1a1a2e,#16213e,#0f3460); }
+
+/* Capas temáticas */
+.layer-options { padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.layer-toggle {
+  display: flex; align-items: center; justify-content: space-between; padding: 8px 10px;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--bg-card);
+}
+.layer-toggle .layer-info { display: flex; align-items: center; gap: 8px; }
+.layer-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.layer-dot.flood { background: var(--flood); box-shadow: 0 0 6px var(--flood-glow); }
+.layer-dot.slide { background: var(--slide); box-shadow: 0 0 6px var(--slide-glow); }
+.layer-name { font-size: 12px; font-weight: 500; }
+.layer-count { font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); margin-top: 1px; }
+
+/* Toggle switch */
+.toggle { position: relative; width: 34px; height: 18px; }
+.toggle input { opacity: 0; width: 0; height: 0; }
+.slider { position: absolute; inset: 0; border-radius: 18px; background: var(--border); cursor: pointer; transition: .2s; }
+.slider::before { content: ''; position: absolute; height: 12px; width: 12px; left: 3px; bottom: 3px; background: #fff; border-radius: 50%; transition: .2s; }
+.toggle input:checked + .slider { background: var(--flood); }
+.toggle input:checked + .slider.slide-slider { background: var(--slide); }
+.toggle input:checked + .slider::before { transform: translateX(16px); }
+
+/* Leyenda */
+.legend-body { padding: 10px 12px; }
+.legend-section { margin-bottom: 12px; }
+.legend-section-title { font-size: 9px; letter-spacing: .12em; text-transform: uppercase; color: var(--text-dim); margin-bottom: 6px; font-family: var(--font-display); }
+.legend-items { display: flex; flex-direction: column; gap: 4px; }
+.legend-item { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--text-secondary); }
+.legend-sym { width: 16px; height: 16px; flex-shrink: 0; border-radius: 50%; border: 2px solid currentColor; display: grid; place-items: center; font-size: 7px; }
+.legend-sym.sev-high { color: var(--danger); background: rgba(255,68,68,.15); }
+.legend-sym.sev-med  { color: var(--warn);  background: rgba(255,209,102,.15); }
+.legend-sym.sev-low  { color: var(--safe);  background: rgba(6,214,160,.15); }
+
+/* Stats panel */
+.stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 10px 12px; }
+.stat-card {
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px; text-align: center;
+}
+.stat-card .num { font-family: var(--font-display); font-size: 22px; font-weight: 700; line-height: 1; }
+.stat-card .lbl { font-size: 9px; letter-spacing: .08em; text-transform: uppercase; color: var(--text-dim); margin-top: 3px; }
+.stat-card.f .num { color: var(--flood); }
+.stat-card.s .num { color: var(--slide); }
+.stat-card.d .num { color: var(--danger); }
+.stat-card.a .num { color: var(--accent-gold); }
+
+/* ───────────── MAP CONTAINER ───────────── */
+#map-wrap { flex: 1; position: relative; }
+#map { width: 100%; height: 100%; }
+
+/* Panel toggle buttons */
+.panel-toggle-btn {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  width: 24px; height: 60px; background: var(--bg-panel);
+  border: 1px solid var(--border-glow); cursor: pointer;
+  display: grid; place-items: center; color: var(--text-secondary);
+  font-size: 10px; z-index: 900; transition: all .2s;
+}
+.panel-toggle-btn:hover { background: var(--bg-card); color: var(--text-primary); }
+#toggle-left  { left: 0; border-radius: 0 6px 6px 0; border-left: none; }
+#toggle-right { right: 0; border-radius: 6px 0 0 6px; border-right: none; }
+
+/* Scale bar override */
+.leaflet-control-scale-line {
+  font-family: var(--font-mono) !important; font-size: 10px !important;
+  background: rgba(13,17,23,.85) !important; border-color: var(--border-glow) !important;
+  color: var(--text-secondary) !important;
+}
+
+/* Zoom control */
+.leaflet-control-zoom { border: 1px solid var(--border-glow) !important; border-radius: 6px !important; overflow: hidden; }
+.leaflet-control-zoom a { background: var(--bg-panel) !important; color: var(--text-secondary) !important; border-color: var(--border) !important; }
+.leaflet-control-zoom a:hover { background: var(--bg-card) !important; color: var(--text-primary) !important; }
+
+/* ───────────── RIGHT PANEL ───────────── */
+#panel-right {
+  width: var(--panel-w); flex-shrink: 0;
+  background: var(--bg-panel);
+  border-left: 1px solid var(--border);
+  display: flex; flex-direction: column; overflow: hidden;
+  transition: width .3s ease; z-index: 1000;
+}
+#panel-right.collapsed { width: 0; }
+
+.events-list { flex: 1; overflow-y: auto; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.events-list::-webkit-scrollbar { width: 4px; }
+.events-list::-webkit-scrollbar-track { background: transparent; }
+.events-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+.event-card {
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 8px; padding: 10px; cursor: pointer; transition: all .2s;
+  border-left: 3px solid transparent;
+}
+.event-card:hover { background: var(--bg-card-hover); transform: translateX(-2px); }
+.event-card.flood { border-left-color: var(--flood); }
+.event-card.slide { border-left-color: var(--slide); }
+.event-card .ec-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 5px; }
+.event-card .ec-type { font-family: var(--font-display); font-size: 10px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; }
+.event-card.flood .ec-type { color: var(--flood); }
+.event-card.slide .ec-type { color: var(--slide); }
+.event-card .ec-sev { font-size: 9px; font-weight: 600; padding: 2px 6px; border-radius: 20px; font-family: var(--font-display); letter-spacing: .06em; }
+.sev-alta  { background: rgba(255,68,68,.15);  color: var(--danger); border: 1px solid rgba(255,68,68,.3); }
+.sev-media { background: rgba(255,209,102,.12); color: var(--warn);   border: 1px solid rgba(255,209,102,.3); }
+.sev-baja  { background: rgba(6,214,160,.12);  color: var(--safe);   border: 1px solid rgba(6,214,160,.3); }
+.event-card .ec-loc { font-size: 11px; color: var(--text-primary); font-weight: 500; margin-bottom: 3px; }
+.event-card .ec-date { font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); }
+.event-card .ec-meta { display: flex; gap: 8px; margin-top: 5px; }
+.ec-tag { font-size: 9px; color: var(--text-dim); background: rgba(255,255,255,.04); border-radius: 3px; padding: 1px 5px; }
+
+.filter-bar { padding: 10px 12px; border-bottom: 1px solid var(--border); display: flex; gap: 6px; }
+.filter-chip {
+  font-family: var(--font-display); font-size: 10px; font-weight: 600; letter-spacing: .08em;
+  padding: 4px 10px; border-radius: 20px; border: 1px solid var(--border);
+  background: transparent; color: var(--text-secondary); cursor: pointer; transition: all .2s;
+}
+.filter-chip.active-f { border-color: var(--flood); background: rgba(0,180,216,.1); color: var(--flood); }
+.filter-chip.active-s { border-color: var(--slide); background: rgba(224,123,57,.1); color: var(--slide); }
+.filter-chip.active-a { border-color: var(--border-glow); background: rgba(255,255,255,.04); color: var(--text-primary); }
+
+/* ───────────── POPUPS & TOOLTIPS ───────────── */
+.leaflet-popup-content-wrapper {
+  background: var(--bg-panel) !important; border: 1px solid var(--border-glow) !important;
+  border-radius: 10px !important; box-shadow: 0 8px 32px rgba(0,0,0,.6) !important;
+  padding: 0 !important;
+}
+.leaflet-popup-tip { background: var(--bg-panel) !important; }
+.leaflet-popup-content { margin: 0 !important; }
+
+.popup-inner { padding: 14px; min-width: 220px; }
+.popup-header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+.popup-icon { width: 32px; height: 32px; border-radius: 6px; display: grid; place-items: center; font-size: 16px; flex-shrink: 0; }
+.popup-icon.flood { background: rgba(0,180,216,.15); color: var(--flood); }
+.popup-icon.slide { background: rgba(224,123,57,.15); color: var(--slide); }
+.popup-title { font-family: var(--font-display); font-size: 13px; font-weight: 600; color: var(--text-primary); line-height: 1.3; }
+.popup-type { font-size: 9px; color: var(--text-dim); letter-spacing: .1em; text-transform: uppercase; }
+.popup-rows { display: flex; flex-direction: column; gap: 5px; }
+.popup-row { display: flex; justify-content: space-between; align-items: center; }
+.popup-row .pk { font-size: 10px; color: var(--text-dim); }
+.popup-row .pv { font-size: 11px; color: var(--text-primary); font-weight: 500; font-family: var(--font-mono); }
+.popup-sev { display: inline-flex; margin-top: 8px; }
+.popup-desc { font-size: 11px; color: var(--text-secondary); margin-top: 8px; line-height: 1.5; border-top: 1px solid var(--border); padding-top: 8px; }
+
+.leaflet-tooltip {
+  background: var(--bg-panel) !important; border: 1px solid var(--border-glow) !important;
+  color: var(--text-primary) !important; font-family: var(--font-body) !important;
+  font-size: 11px !important; border-radius: 6px !important;
+  box-shadow: 0 4px 12px rgba(0,0,0,.5) !important; padding: 5px 9px !important;
+}
+.leaflet-tooltip::before { border-top-color: var(--border-glow) !important; }
+
+/* ───────────── CUSTOM MARKERS (SVG + pulse) ───────────── */
+@keyframes ripple-flood {
+  0%   { transform: scale(1);   opacity: .7; }
+  100% { transform: scale(2.6); opacity: 0; }
+}
+@keyframes ripple-slide {
+  0%   { transform: scale(1);   opacity: .7; }
+  100% { transform: scale(2.4); opacity: 0; }
+}
+
+/* ───────────── CLUSTER overrides ───────────── */
+.marker-cluster-small  { background: rgba(0,100,160,.4) !important; }
+.marker-cluster-medium { background: rgba(200,80,0,.4)  !important; }
+.marker-cluster-large  { background: rgba(180,0,0,.4)   !important; }
+.marker-cluster-small  div, .marker-cluster-medium div, .marker-cluster-large div {
+  background: transparent !important; color: #fff !important;
+  font-family: var(--font-display) !important; font-size: 13px !important; font-weight: 700 !important;
+}
+
+/* ───────────── COORDS BAR ───────────── */
+#coords-bar {
+  position: absolute; bottom: 0; left: 0; right: 0; height: 22px;
+  background: rgba(13,17,23,.88); border-top: 1px solid var(--border);
+  display: flex; align-items: center; padding: 0 10px; gap: 16px;
+  font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); z-index: 800;
+}
+#coords-bar span { color: var(--text-secondary); }
+
+/* ───────────── SEARCH BOX ───────────── */
+#search-box {
+  position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+  width: 280px; z-index: 900;
+  display: flex; align-items: center; gap: 8px;
+  background: rgba(13,17,23,.92); border: 1px solid var(--border-glow);
+  border-radius: 8px; padding: 7px 12px;
+  backdrop-filter: blur(8px);
+}
+#search-box i { color: var(--text-dim); font-size: 12px; }
+#search-box input {
+  background: transparent; border: none; outline: none; color: var(--text-primary);
+  font-family: var(--font-body); font-size: 12px; flex: 1;
+}
+#search-box input::placeholder { color: var(--text-dim); }
+
+/* ───────────── INFO OVERLAY ───────────── */
+#info-overlay {
+  position: absolute; bottom: 26px; right: 10px; z-index: 900;
+  background: rgba(13,17,23,.88); border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px 12px;
+  font-size: 10px; color: var(--text-dim); font-family: var(--font-mono);
+  backdrop-filter: blur(6px); max-width: 200px;
+}
+#info-overlay .io-title { color: var(--parchment); font-size: 9px; letter-spacing: .1em; text-transform: uppercase; margin-bottom: 4px; }
+
+/* ───────────── PANEL SCROLL ───────────── */
+.panel-scroll { overflow-y: auto; flex: 1; }
+.panel-scroll::-webkit-scrollbar { width: 3px; }
+.panel-scroll::-webkit-scrollbar-thumb { background: var(--border); }
+
+/* ───────────── SECTION COLLAPSIBLE ───────────── */
+.collapsible { transition: max-height .3s ease, opacity .3s; overflow: hidden; }
+.collapsible.closed { max-height: 0 !important; opacity: 0; }
+
+/* Timeline mini */
+.timeline { padding: 10px 12px; }
+.tl-item { display: flex; gap: 8px; margin-bottom: 8px; position: relative; }
+.tl-item::before { content:''; position:absolute; left:6px; top:14px; bottom:-8px; width:1px; background:var(--border); }
+.tl-item:last-child::before { display:none; }
+.tl-dot { width: 13px; height: 13px; border-radius: 50%; flex-shrink: 0; margin-top: 2px; border: 2px solid; }
+.tl-dot.f { border-color: var(--flood); background: rgba(0,180,216,.2); }
+.tl-dot.s { border-color: var(--slide); background: rgba(224,123,57,.2); }
+.tl-info .ti-loc { font-size: 11px; color: var(--text-primary); font-weight: 500; }
+.tl-info .ti-date { font-family: var(--font-mono); font-size: 9px; color: var(--text-dim); }
+
+/* ──── BOTTOM STATUS BAR ──── */
+#status-bar {
+  position: absolute; bottom: 22px; left: 50%; transform: translateX(-50%);
+  background: rgba(13,17,23,.9); border: 1px solid var(--border);
+  border-radius: 20px; padding: 4px 14px;
+  font-size: 10px; color: var(--text-dim); z-index: 850;
+  backdrop-filter: blur(6px); pointer-events: none;
+  font-family: var(--font-mono);
+}
+</style>
+</head>
+<body>
+
+<!-- TOP BAR -->
+<div id="topbar">
+  <div class="logo-area">
+    <div class="logo-icon">🌊</div>
+    <h1>Recolección de Eventos
+      <span>Inundaciones · Deslizamientos · Colombia</span>
+    </h1>
+  </div>
+  <div class="topbar-right">
+    <div class="badge-live"><div class="dot"></div> EN VIVO</div>
+    <div class="topbar-divider"></div>
+    <div class="topbar-stat flood">
+      <div class="val" id="stat-flood">24</div>
+      <div class="lbl">Inundaciones</div>
+    </div>
+    <div class="topbar-divider"></div>
+    <div class="topbar-stat slide">
+      <div class="val" id="stat-slide">18</div>
+      <div class="lbl">Deslizamientos</div>
+    </div>
+    <div class="topbar-divider"></div>
+    <div class="topbar-stat">
+      <div class="val" style="color:var(--danger)" id="stat-high">9</div>
+      <div class="lbl">Alto impacto</div>
+    </div>
+  </div>
+</div>
+
+<div id="app">
+
+  <!-- LEFT PANEL -->
+  <div id="panel-left">
+    <div class="panel-scroll">
+
+      <!-- Bases cartográficas -->
+      <div class="panel-section">
+        <div class="panel-header open" onclick="toggleSection(this)">
+          <h3><i class="fa fa-layer-group" style="color:var(--flood);margin-right:6px"></i>Bases Cartográficas</h3>
+          <i class="fa fa-chevron-down chevron"></i>
+        </div>
+        <div class="collapsible panel-body" style="max-height:200px">
+          <div class="base-options">
+            <button class="base-btn" onclick="setBase('satellite')" id="btn-sat">
+              <div class="ico ico-sat"></div>
+              <div><div style="font-weight:600">Satelital</div><div style="font-size:10px;color:var(--text-dim)">Esri World Imagery</div></div>
+            </button>
+            <button class="base-btn active" onclick="setBase('osm')" id="btn-osm">
+              <div class="ico ico-osm"></div>
+              <div><div style="font-weight:600">OpenStreetMap</div><div style="font-size:10px;color:var(--text-dim)">Cartografía colaborativa</div></div>
+            </button>
+            <button class="base-btn" onclick="setBase('dark')" id="btn-dark">
+              <div class="ico ico-dark"></div>
+              <div><div style="font-weight:600">Oscura / Sobria</div><div style="font-size:10px;color:var(--text-dim)">CartoDB Dark Matter</div></div>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Capas temáticas -->
+      <div class="panel-section">
+        <div class="panel-header open" onclick="toggleSection(this)">
+          <h3><i class="fa fa-map-marker-alt" style="color:var(--slide);margin-right:6px"></i>Capas Temáticas</h3>
+          <i class="fa fa-chevron-down chevron"></i>
+        </div>
+        <div class="collapsible panel-body" style="max-height:160px">
+          <div class="layer-options">
+            <div class="layer-toggle">
+              <div class="layer-info">
+                <div class="layer-dot flood"></div>
+                <div>
+                  <div class="layer-name" style="color:var(--flood)">Inundaciones</div>
+                  <div class="layer-count" id="cnt-flood">24 registros activos</div>
+                </div>
+              </div>
+              <label class="toggle"><input type="checkbox" id="chk-flood" checked onchange="toggleLayer('flood')"><span class="slider"></span></label>
+            </div>
+            <div class="layer-toggle">
+              <div class="layer-info">
+                <div class="layer-dot slide"></div>
+                <div>
+                  <div class="layer-name" style="color:var(--slide)">Deslizamientos</div>
+                  <div class="layer-count" id="cnt-slide">18 registros activos</div>
+                </div>
+              </div>
+              <label class="toggle"><input type="checkbox" id="chk-slide" checked onchange="toggleLayer('slide')"><span class="slider slide-slider"></span></label>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Leyenda -->
+      <div class="panel-section">
+        <div class="panel-header open" onclick="toggleSection(this)">
+          <h3><i class="fa fa-palette" style="color:var(--parchment);margin-right:6px"></i>Simbología</h3>
+          <i class="fa fa-chevron-down chevron"></i>
+        </div>
+        <div class="collapsible panel-body" style="max-height:300px">
+          <div class="legend-body">
+            <div class="legend-section">
+              <div class="legend-section-title">🌊 Inundaciones</div>
+              <div class="legend-items">
+                <div class="legend-item"><div class="legend-sym sev-high">◈</div><span>Severidad Alta — Amenaza directa</span></div>
+                <div class="legend-item"><div class="legend-sym sev-med">◈</div><span>Severidad Media — Monitoreo activo</span></div>
+                <div class="legend-item"><div class="legend-sym sev-low">◈</div><span>Severidad Baja — Registro histórico</span></div>
+              </div>
+            </div>
+            <div class="legend-section">
+              <div class="legend-section-title">⛰️ Deslizamientos</div>
+              <div class="legend-items">
+                <div class="legend-item"><div class="legend-sym sev-high" style="color:var(--slide);background:rgba(224,123,57,.15)">▲</div><span>Severidad Alta — Zona crítica</span></div>
+                <div class="legend-item"><div class="legend-sym sev-med" style="color:var(--slide);background:rgba(224,123,57,.1)">▲</div><span>Severidad Media — Alerta temprana</span></div>
+                <div class="legend-item"><div class="legend-sym sev-low" style="color:var(--slide);background:rgba(224,123,57,.06)">▲</div><span>Severidad Baja — Antecedente</span></div>
+              </div>
+            </div>
+            <div class="legend-section">
+              <div class="legend-section-title">Escala de impacto</div>
+              <div style="display:flex;gap:3px;align-items:center;margin-top:4px">
+                <div style="flex:1;height:6px;border-radius:3px;background:linear-gradient(90deg,var(--safe),var(--warn),var(--danger))"></div>
+              </div>
+              <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--text-dim);margin-top:3px">
+                <span>Bajo</span><span>Medio</span><span>Alto</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Estadísticas -->
+      <div class="panel-section">
+        <div class="panel-header open" onclick="toggleSection(this)">
+          <h3><i class="fa fa-chart-bar" style="color:var(--accent-gold);margin-right:6px"></i>Estadísticas</h3>
+          <i class="fa fa-chevron-down chevron"></i>
+        </div>
+        <div class="collapsible panel-body" style="max-height:200px">
+          <div class="stats-grid">
+            <div class="stat-card f"><div class="num">24</div><div class="lbl">Inundaciones</div></div>
+            <div class="stat-card s"><div class="num">18</div><div class="lbl">Deslizamientos</div></div>
+            <div class="stat-card d"><div class="num">9</div><div class="lbl">Alto impacto</div></div>
+            <div class="stat-card a"><div class="num">42</div><div class="lbl">Total eventos</div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Timeline -->
+      <div class="panel-section">
+        <div class="panel-header open" onclick="toggleSection(this)">
+          <h3><i class="fa fa-clock" style="color:var(--text-dim);margin-right:6px"></i>Línea de Tiempo</h3>
+          <i class="fa fa-chevron-down chevron"></i>
+        </div>
+        <div class="collapsible panel-body" style="max-height:260px">
+          <div class="timeline">
+            <div class="tl-item"><div class="tl-dot f"></div><div class="tl-info"><div class="ti-loc">Inundación — Bello, Antioquia</div><div class="ti-date">Jun 18, 2025 · 14:32</div></div></div>
+            <div class="tl-item"><div class="tl-dot s"></div><div class="tl-info"><div class="ti-loc">Deslizamiento — Manizales, Caldas</div><div class="ti-date">Jun 17, 2025 · 09:15</div></div></div>
+            <div class="tl-item"><div class="tl-dot f"></div><div class="tl-info"><div class="ti-loc">Inundación — Honda, Tolima</div><div class="ti-date">Jun 16, 2025 · 22:41</div></div></div>
+            <div class="tl-item"><div class="tl-dot s"></div><div class="tl-info"><div class="ti-loc">Deslizamiento — Salgar, Antioquia</div><div class="ti-date">Jun 15, 2025 · 07:30</div></div></div>
+            <div class="tl-item"><div class="tl-dot f"></div><div class="tl-info"><div class="ti-loc">Inundación — Tumaco, Nariño</div><div class="ti-date">Jun 14, 2025 · 18:05</div></div></div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- end panel-scroll -->
+  </div><!-- end panel-left -->
+
+  <!-- MAP AREA -->
+  <div id="map-wrap">
+    <div id="map"></div>
+
+    <!-- Search -->
+    <div id="search-box">
+      <i class="fa fa-search"></i>
+      <input type="text" placeholder="Buscar municipio o evento..." id="search-input" oninput="filterSearch(this.value)"/>
+    </div>
+
+    <!-- Panel toggles -->
+    <button class="panel-toggle-btn" id="toggle-left" onclick="togglePanel('left')" title="Panel izquierdo">
+      <i class="fa fa-chevron-left" id="icon-left"></i>
+    </button>
+    <button class="panel-toggle-btn" id="toggle-right" onclick="togglePanel('right')" title="Panel derecho">
+      <i class="fa fa-chevron-right" id="icon-right"></i>
+    </button>
+
+    <!-- Coords -->
+    <div id="coords-bar">
+      <span>LAT: <span id="lat-val">4.6097</span></span>
+      <span>LNG: <span id="lng-val">-74.0817</span></span>
+      <span>ZOOM: <span id="zoom-val">6</span></span>
+      <span style="margin-left:auto;color:var(--text-dim)">🌐 GCS WGS84 / EPSG:4326</span>
+    </div>
+
+    <div id="status-bar">Cargando datos de eventos…</div>
+  </div>
+
+  <!-- RIGHT PANEL -->
+  <div id="panel-right">
+    <div style="padding:10px 12px;border-bottom:1px solid var(--border)">
+      <div style="font-family:var(--font-display);font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--text-secondary)">
+        <i class="fa fa-list-ul" style="color:var(--accent-gold);margin-right:6px"></i>Registro de Eventos
+      </div>
+    </div>
+    <div class="filter-bar">
+      <button class="filter-chip active-a" id="fc-all"   onclick="filterEvents('all')">TODOS</button>
+      <button class="filter-chip"          id="fc-flood" onclick="filterEvents('flood')">💧 INUND.</button>
+      <button class="filter-chip"          id="fc-slide" onclick="filterEvents('slide')">⛰️ DESL.</button>
+    </div>
+    <div class="events-list" id="events-list"></div>
+  </div>
+
+</div><!-- end app -->
+
+<!-- Scripts -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.min.js"></script>
+
+<script>
+/* ═══════════════════════════════════════════════════════════
+   DATOS DE MUESTRA — 42 eventos Colombia
+═══════════════════════════════════════════════════════════ */
+const EVENTS = [
+  // ─── INUNDACIONES ───
+  {id:1,type:'flood',loc:'Bello, Antioquia',lat:6.338,lng:-75.555,sev:'alta',fecha:'2025-06-18',hora:'14:32',area:'380 ha',afectados:1240,causa:'Desbordamiento Río Medellín',desc:'Desbordamiento del Río Medellín por lluvias intensas. Evacuación preventiva en sectores La Madera y La García.'},
+  {id:2,type:'flood',loc:'Honda, Tolima',lat:5.201,lng:-74.741,sev:'alta',fecha:'2025-06-16',hora:'22:41',area:'220 ha',afectados:890,causa:'Creciente súbita Río Magdalena',desc:'Creciente súbita del Río Magdalena afecta barrios ribereños. UNGRD activó protocolo de emergencia nivel 2.'},
+  {id:3,type:'flood',loc:'Tumaco, Nariño',lat:1.803,lng:-78.765,sev:'alta',fecha:'2025-06-14',hora:'18:05',area:'150 ha',afectados:600,causa:'Marejada costera + lluvia',desc:'Combinación de marejada y precipitaciones extremas inunda el área costera norte del municipio.'},
+  {id:4,type:'flood',loc:'Montería, Córdoba',lat:8.757,lng:-75.881,sev:'media',fecha:'2025-06-12',hora:'10:15',area:'500 ha',afectados:2100,causa:'Río Sinú — caudal máximo',desc:'El Río Sinú alcanzó caudal máximo histórico para la temporada. Alerta naranja activa.'},
+  {id:5,type:'flood',loc:'Caucasia, Antioquia',lat:7.988,lng:-75.197,sev:'media',fecha:'2025-06-10',hora:'08:30',area:'300 ha',afectados:780,causa:'Desbordamiento Río Cauca',desc:'Desbordamiento del Río Cauca en la parte baja del municipio. Afecta vías principales.'},
+  {id:6,type:'flood',loc:'Riohacha, Guajira',lat:11.544,lng:-72.907,sev:'baja',fecha:'2025-06-08',hora:'16:00',area:'80 ha',afectados:230,causa:'Río Ranchería',desc:'Crecida moderada del Río Ranchería. Monitoreo continuo por autoridades locales.'},
+  {id:7,type:'flood',loc:'Quibdó, Chocó',lat:5.694,lng:-76.658,sev:'alta',fecha:'2025-06-07',hora:'20:45',area:'420 ha',afectados:1800,causa:'Río Atrato — nivel crítico',desc:'El Río Atrato supera nivel histórico de alerta. Comunidades del bajo Chocó en riesgo inminente.'},
+  {id:8,type:'flood',loc:'Buenaventura, Valle',lat:3.879,lng:-77.031,sev:'media',fecha:'2025-06-05',hora:'12:00',area:'200 ha',afectados:920,causa:'Lluvias extremas + Pacífico',desc:'Zona portuaria y residencial afectada por lluvias persistentes durante 72 horas.'},
+  {id:9,type:'flood',loc:'Magangué, Bolívar',lat:9.241,lng:-74.754,sev:'media',fecha:'2025-06-03',hora:'06:20',area:'340 ha',afectados:1100,causa:'Complejo cenagoso Magangué',desc:'Desbordamiento del complejo cenagoso inunda sectores rurales y periurbanos.'},
+  {id:10,type:'flood',loc:'Villavicencio, Meta',lat:4.142,lng:-73.626,sev:'baja',fecha:'2025-05-30',hora:'15:10',area:'90 ha',afectados:310,causa:'Quebradas urbanas colmatadas',desc:'Varias quebradas urbanas colmatadas generan encharcamiento severo en barrios del sur.'},
+  {id:11,type:'flood',loc:'Barrancabermeja, Santander',lat:7.065,lng:-73.855,sev:'alta',fecha:'2025-05-28',hora:'11:30',area:'260 ha',afectados:870,causa:'Río Magdalena — Puerto Wilches',desc:'Sector de Puerto Wilches bajo 1.2 m de agua. Operaciones de extracción suspendidas.'},
+  {id:12,type:'flood',loc:'San Marcos, Sucre',lat:8.657,lng:-75.124,sev:'media',fecha:'2025-05-25',hora:'07:45',area:'180 ha',afectados:540,causa:'Río San Jorge',desc:'Río San Jorge supera la cota de alerta en 40 cm. Familias campesinas relocalizadas.'},
+  {id:13,type:'flood',loc:'Florencia, Caquetá',lat:1.614,lng:-75.606,sev:'baja',fecha:'2025-05-22',hora:'19:00',area:'70 ha',afectados:180,causa:'Quebrada La Perdiz',desc:'Evento de intensidad baja. Registro para catastro de amenazas de la cuenca.'},
+  {id:14,type:'flood',loc:'Arauca, Arauca',lat:7.090,lng:-70.762,sev:'media',fecha:'2025-05-20',hora:'14:00',area:'190 ha',afectados:600,causa:'Río Arauca — frontera',desc:'Río Arauca supera máximos históricos mensuales. Declaratoria de calamidad pública.'},
+  {id:15,type:'flood',loc:'Turbo, Antioquia',lat:8.097,lng:-76.730,sev:'alta',fecha:'2025-05-18',hora:'23:15',area:'310 ha',afectados:1400,causa:'Golfo de Urabá — marejada',desc:'Marejada anómala combinada con lluvias afecta comunidades costeras de forma severa.'},
+  {id:16,type:'flood',loc:'Tame, Arauca',lat:6.457,lng:-71.729,sev:'baja',fecha:'2025-05-15',hora:'10:00',area:'60 ha',afectados:140,causa:'Quebrada Tame',desc:'Afectación menor de zonas agrícolas. Sin víctimas reportadas.'},
+  {id:17,type:'flood',loc:'Lorica, Córdoba',lat:9.235,lng:-75.815,sev:'media',fecha:'2025-05-12',hora:'08:30',area:'220 ha',afectados:760,causa:'Ciénaga Grande de Lorica',desc:'Nivel de ciénaga supera la cota de emergencia afectando comunidades de pescadores artesanales.'},
+  {id:18,type:'flood',loc:'Pereira, Risaralda',lat:4.814,lng:-75.696,sev:'baja',fecha:'2025-05-10',hora:'17:25',area:'45 ha',afectados:95,causa:'Quebradas Condina y Egoyá',desc:'Encharcamiento en zona industrial. Afectación menor controlada por bomberos municipales.'},
+  {id:19,type:'flood',loc:'Apartadó, Antioquia',lat:7.880,lng:-76.634,sev:'media',fecha:'2025-05-08',hora:'21:00',area:'140 ha',afectados:430,causa:'Río León',desc:'Desbordamiento en zona bananera. Afecta plantaciones y vías secundarias.'},
+  {id:20,type:'flood',loc:'Puerto Berrío, Antioquia',lat:6.490,lng:-74.407,sev:'alta',fecha:'2025-05-05',hora:'13:45',area:'195 ha',afectados:720,causa:'Río Magdalena — caudal alto',desc:'Puerto fluvial temporal cerrado. 3 familias rescatadas por defensa civil.'},
+  {id:21,type:'flood',loc:'Mompox, Bolívar',lat:9.242,lng:-74.426,sev:'media',fecha:'2025-05-02',hora:'09:10',area:'170 ha',afectados:510,causa:'Brazo de Mompox — Magdalena',desc:'Área patrimonial de Mompox en riesgo. Bombas de achique activadas en zona histórica.'},
+  {id:22,type:'flood',loc:'Tierralta, Córdoba',lat:8.172,lng:-76.063,sev:'baja',fecha:'2025-04-28',hora:'14:30',area:'80 ha',afectados:200,causa:'Embalse Urrá — vertimiento',desc:'Incremento de vertimiento por precaución en embalse Urrá genera crecida aguas abajo.'},
+  {id:23,type:'flood',loc:'El Banco, Magdalena',lat:9.001,lng:-73.976,sev:'media',fecha:'2025-04-25',hora:'06:00',area:'230 ha',afectados:850,causa:'Río Magdalena — cuenca media',desc:'Zona ribereña inundada. Alcaldía activa plan de contingencia para 6 barrios.'},
+  {id:24,type:'flood',loc:'Nechí, Antioquia',lat:8.096,lng:-74.769,sev:'baja',fecha:'2025-04-22',hora:'11:00',area:'55 ha',afectados:165,causa:'Río Nechí',desc:'Nivel alto pero estable. Monitoreo cada 6 horas por IDEAM.'},
+  {id:1,type:'flood', loc:'Punto A', lat:6.406391148945332,  lng:-75.323108293564289, sev:'media', fecha:'2025-06-18', hora:'14:32', area:'— ha', afectados:35,  causa:'Sin dato', desc:'Registro ID 1. Nombre: Punto A. Edad: 35.'},
+  {id:2,type:'flood', loc:'Punto B', lat:7.916329724053496,  lng:-73.731282270639454, sev:'baja',  fecha:'2025-06-18', hora:'14:32', area:'— ha', afectados:22,  causa:'Sin dato', desc:'Registro ID 2. Nombre: Punto B. Edad: 22.'},
+  {id:3,type:'flood', loc:'Punto C', lat:7.066516882690213,  lng:-72.664234057470054, sev:'alta',  fecha:'2025-06-18', hora:'14:32', area:'— ha', afectados:58,  causa:'Sin dato', desc:'Registro ID 3. Nombre: Punto C. Edad: 58.'},
+  {id:5,type:'flood', loc:'Punto E', lat:4.26425069831019,   lng:-71.614678437959157, sev:'alta',  fecha:'2025-06-18', hora:'14:32', area:'— ha', afectados:67,  causa:'Sin dato', desc:'Registro ID 5. Nombre: Punto E. Edad: 67.'},
+  {id:7,type:'flood', loc:'Punto G', lat:3.356656232222676,  lng:-75.620482385759033, sev:'alta',  fecha:'2025-06-18', hora:'14:32', area:'— ha', afectados:53,  causa:'Sin dato', desc:'Registro ID 7. Nombre: Punto G. Edad: 53.'},
+  {id:9,type:'flood', loc:'Punto I', lat:5.188195645451738,  lng:-74.483463797955579, sev:'baja',  fecha:'2025-06-18', hora:'14:32', area:'— ha', afectados:31,  causa:'Sin dato', desc:'Registro ID 9. Nombre: Punto I. Edad: 31.'},
+  {id:11,type:'flood', loc:'Punto K', lat:8.26269982163719,   lng:-74.640897140882203, sev:'baja',  fecha:'2025-06-18', hora:'14:32', area:'— ha', afectados:19,  causa:'Sin dato', desc:'Registro ID 11. Nombre: Punto K. Edad: 19.'},
+  {id:13,type:'flood', loc:'Punto M', lat:10.59213598997783,  lng:-74.098626737468251, sev:'media', fecha:'2025-06-18', hora:'14:32', area:'— ha', afectados:36,  causa:'Sin dato', desc:'Registro ID 13. Nombre: Punto M. Edad: 36.'},
+  {id:15,type:'flood', loc:'Punto O', lat:6.614948386958914,  lng:-72.314382184299745, sev:'baja',  fecha:'2025-06-18', hora:'14:32', area:'— ha', afectados:27,  causa:'Sin dato', desc:'Registro ID 15. Nombre: Punto O. Edad: 27.'},
+  {id:17,type:'flood', loc:'Punto Q', lat:6.041212438384322,  lng:-72.821667400396677, sev:'media', fecha:'2025-06-18', hora:'14:32', area:'— ha', afectados:38,  causa:'Sin dato', desc:'Registro ID 17. Nombre: Punto Q. Edad: 38.'},
+
+  // ─── DESLIZAMIENTOS ───
+  {id:25,type:'slide',loc:'Manizales, Caldas',lat:5.070,lng:-75.513,sev:'alta',fecha:'2025-06-17',hora:'09:15',vol:'42000 m³',afectados:380,causa:'Ladera inestable + saturación',desc:'Deslizamiento rotacional en ladera suroriental. Destrucción de 18 viviendas. UNGRD en terreno.'},
+  {id:26,type:'slide',loc:'Salgar, Antioquia',lat:5.967,lng:-75.981,sev:'alta',fecha:'2025-06-15',hora:'07:30',vol:'85000 m³',afectados:920,causa:'Avenida torrencial Quebrada La Liboriana',desc:'Avenida torrencial de alta energía. Declaratoria de emergencia departamental. Búsqueda y rescate activo.'},
+  {id:27,type:'slide',loc:'Mocoa, Putumayo',lat:1.151,lng:-76.648,sev:'alta',fecha:'2025-06-13',hora:'03:10',vol:'120000 m³',afectados:1600,causa:'Río Mulato — creciente rápida',desc:'Evento de gran magnitud similar al de 2017. Zona crítica en barrios Miraflores y Sindagua.'},
+  {id:28,type:'slide',loc:'Nariño — Pasto (zona rural)',lat:1.213,lng:-77.281,sev:'media',fecha:'2025-06-11',hora:'16:45',vol:'28000 m³',afectados:210,causa:'Zona de falla geológica + lluvia',desc:'Deslizamiento bloquea vía Pasto-Tumaco en el km 34. Tráfico desviado. Sin víctimas confirmadas.'},
+  {id:29,type:'slide',loc:'Armenia, Quindío',lat:4.534,lng:-75.681,sev:'baja',fecha:'2025-06-09',hora:'13:20',vol:'8000 m³',afectados:45,causa:'Corte de talud urbanización',desc:'Deslizamiento superficial en talud de urbanización reciente. Afecta vías internas del sector.'},
+  {id:30,type:'slide',loc:'Bucaramanga, Santander',lat:7.119,lng:-73.122,sev:'media',fecha:'2025-06-07',hora:'18:00',vol:'15000 m³',afectados:130,causa:'Ladera nororiental — zona de riesgo',desc:'Movimiento en ladera nororiental afecta barrio La Joya. CDMGRD en activación nivel II.'},
+  {id:31,type:'slide',loc:'Ibagué, Tolima',lat:4.438,lng:-75.232,sev:'baja',fecha:'2025-06-04',hora:'22:00',vol:'5000 m³',afectados:60,causa:'Talud vial vía Calarcá',desc:'Cierre parcial de vía por material. Desbloqueo en 6 horas por maquinaria municipal.'},
+  {id:32,type:'slide',loc:'Riosucio, Caldas',lat:5.419,lng:-75.709,sev:'alta',fecha:'2025-06-02',hora:'05:30',vol:'67000 m³',afectados:700,causa:'Quebrada Arma — cuenca alta',desc:'Colada de lodo de alta velocidad. Alerta máxima activada. Evacuación masiva en curso.'},
+  {id:33,type:'slide',loc:'La Jagua de Ibírico, Cesar',lat:9.556,lng:-73.337,sev:'media',fecha:'2025-05-29',hora:'08:00',vol:'22000 m³',afectados:180,causa:'Zona minera — terreno alterado',desc:'Inestabilidad en zona de influencia minera. Empresa minera suspende operaciones en sector norte.'},
+  {id:34,type:'slide',loc:'San Sebastián, Cauca',lat:1.925,lng:-76.824,sev:'media',fecha:'2025-05-26',hora:'11:30',vol:'31000 m³',afectados:250,causa:'Zona cordillera — saturación',desc:'Deslizamiento bloquea vía Popayán-Florencia. Comunidades rurales aisladas.'},
+  {id:35,type:'slide',loc:'Marmato, Caldas',lat:5.474,lng:-75.608,sev:'alta',fecha:'2025-05-24',hora:'14:00',vol:'50000 m³',afectados:540,causa:'Minería artesanal — ladera alterada',desc:'Zona de minería aurífera con severa alteración geomorfológica. Riesgo de colapso estructural.'},
+  {id:36,type:'slide',loc:'Génova, Quindío',lat:4.026,lng:-75.760,sev:'baja',fecha:'2025-05-20',hora:'16:30',vol:'7000 m³',afectados:35,causa:'Talud cafetero — lluvia acumulada',desc:'Afectación en zona cafetera. Sin víctimas. Daños menores en infraestructura vial.'},
+  {id:37,type:'slide',loc:'Tierradentro, Cauca',lat:2.524,lng:-76.105,sev:'media',fecha:'2025-05-17',hora:'07:00',vol:'18000 m³',afectados:95,causa:'Zona arqueológica — ladera',desc:'Movimiento de masa en zona de amortiguación del Parque Arqueológico. Sin afectación directa al patrimonio.'},
+  {id:38,type:'slide',loc:'Miraflores, Boyacá',lat:5.201,lng:-73.142,sev:'baja',fecha:'2025-05-14',hora:'09:45',vol:'9000 m³',afectados:50,causa:'Ladera arcillosa — saturación',desc:'Evento de baja magnitud registrado. Sirve como dato de calibración del modelo SIAVAC.'},
+  {id:39,type:'slide',loc:'San Vicente, Antioquia',lat:6.296,lng:-75.342,sev:'media',fecha:'2025-05-10',hora:'20:15',vol:'25000 m³',afectados:175,causa:'Cuenca Nus — escorrentía',desc:'Afecta vías terciarias y predios agropecuarios en cuenca media del río Nus.'},
+  {id:40,type:'slide',loc:'La Plata, Huila',lat:2.389,lng:-75.896,sev:'alta',fecha:'2025-05-06',hora:'04:20',vol:'73000 m³',afectados:620,causa:'Macizo Colombiano — alta pendiente',desc:'Zona de alta susceptibilidad en el Macizo Colombiano. Evento recurrente registrado por SGC.'},
+  {id:41,type:'slide',loc:'Apía, Risaralda',lat:5.098,lng:-75.956,sev:'baja',fecha:'2025-05-02',hora:'15:00',vol:'6000 m³',afectados:28,causa:'Talud rural',desc:'Deslizamiento menor documentado para catastro de riesgo del municipio.'},
+  {id:42,type:'slide',loc:'Convención, Norte de Santander',lat:8.464,lng:-73.337,sev:'media',fecha:'2025-04-28',hora:'12:00',vol:'19000 m³',afectados:155,causa:'Serranía del Perijá',desc:'Material volcado sobre vía principal. Trabajos de limpieza en curso. Afectación económica local.'},
+];
+
+/* ═══════════════════════════════════════════════════════════
+   MAPA
+═══════════════════════════════════════════════════════════ */
+const map = L.map('map', {
+  center: [5.5, -74.5],
+  zoom: 6,
+  zoomControl: false,
+  attributionControl: true
+});
+
+L.control.zoom({ position: 'bottomleft' }).addTo(map);
+L.control.scale({ position: 'bottomright', imperial: false }).addTo(map);
+
+// ── BASES CARTOGRÁFICAS ──
+const baseLayers = {
+  osm: L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution:'© OpenStreetMap contributors', maxZoom: 19
+  }),
+  satellite: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+    attribution:'© Esri, DigitalGlobe, GeoEye', maxZoom: 19
+  }),
+  dark: L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution:'© CartoDB', subdomains:'abcd', maxZoom: 19
+  })
+};
+
+baseLayers.osm.addTo(map);
+let currentBase = 'osm';
+
+function setBase(name) {
+  Object.values(baseLayers).forEach(l => map.removeLayer(l));
+  baseLayers[name].addTo(map);
+  currentBase = name;
+  document.querySelectorAll('.base-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('btn-'+name).classList.add('active');
+}
+
+// ── MARKER GROUPS ──
+const clusterFlood = L.markerClusterGroup({
+  iconCreateFunction: c => L.divIcon({
+    html:`<div style="width:36px;height:36px;border-radius:50%;background:rgba(0,100,160,.55);border:2px solid #00b4d8;display:grid;place-items:center;font-family:'Oswald',sans-serif;font-weight:700;font-size:13px;color:#fff;box-shadow:0 0 10px rgba(0,180,216,.5)">${c.getChildCount()}</div>`,
+    className:'', iconSize:[36,36]
+  }),
+  maxClusterRadius: 60
+});
+const clusterSlide = L.markerClusterGroup({
+  iconCreateFunction: c => L.divIcon({
+    html:`<div style="width:36px;height:36px;border-radius:50%;background:rgba(160,60,0,.55);border:2px solid #e07b39;display:grid;place-items:center;font-family:'Oswald',sans-serif;font-weight:700;font-size:13px;color:#fff;box-shadow:0 0 10px rgba(224,123,57,.5)">${c.getChildCount()}</div>`,
+    className:'', iconSize:[36,36]
+  }),
+  maxClusterRadius: 60
+});
+
+// ── SVG ICON BUILDERS ──
+function floodIcon(sev) {
+  const colors = { alta: '#ff4444', media: '#ffd166', baja: '#06d6a0' };
+  const sizes  = { alta: 32, media: 26, baja: 22 };
+  const c = colors[sev]; const s = sizes[sev];
+  const pulse = sev === 'alta' ? `<circle cx="${s}" cy="${s}" r="${s*.6}" fill="${c}" opacity="0" style="animation:ripple-flood 1.8s infinite ease-out"/>` : '';
+  return L.divIcon({
+    html:`<svg xmlns="http://www.w3.org/2000/svg" width="${s*2}" height="${s*2}" viewBox="0 0 ${s*2} ${s*2}">
+      <defs>
+        <radialGradient id="fg${sev}" cx="50%" cy="40%" r="60%">
+          <stop offset="0%" stop-color="#00e5ff"/><stop offset="100%" stop-color="${c}"/>
+        </radialGradient>
+        <filter id="glow"><feGaussianBlur stdDeviation="2.5" result="blur"/>
+          <feComposite in="SourceGraphic" in2="blur" operator="over"/></filter>
+      </defs>
+      ${pulse}
+      <circle cx="${s}" cy="${s}" r="${s*.75}" fill="url(#fg${sev})" opacity=".9" filter="url(#glow)"/>
+      <circle cx="${s}" cy="${s}" r="${s*.75}" fill="none" stroke="${c}" stroke-width="2" opacity=".8"/>
+      <text x="${s}" y="${s+5}" text-anchor="middle" font-size="${s*.65}" font-family="serif" fill="white">💧</text>
+    </svg>`,
+    className:'', iconSize:[s*2,s*2], iconAnchor:[s,s]
+  });
+}
+
+function slideIcon(sev) {
+  const colors = { alta: '#ff4444', media: '#ffd166', baja: '#06d6a0' };
+  const sizes  = { alta: 32, media: 26, baja: 22 };
+  const c = colors[sev]; const s = sizes[sev];
+  const pulse = sev === 'alta' ? `<polygon points="${s},${s*.2} ${s*1.9},${s*1.85} ${s*.1},${s*1.85}" fill="${c}" opacity="0" style="animation:ripple-slide 1.8s infinite ease-out"/>` : '';
+  return L.divIcon({
+    html:`<svg xmlns="http://www.w3.org/2000/svg" width="${s*2}" height="${s*2}" viewBox="0 0 ${s*2} ${s*2}">
+      <defs>
+        <linearGradient id="sg${sev}" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#ffb347"/><stop offset="100%" stop-color="${c}"/>
+        </linearGradient>
+        <filter id="glow2"><feGaussianBlur stdDeviation="2.5" result="blur"/>
+          <feComposite in="SourceGraphic" in2="blur" operator="over"/></filter>
+      </defs>
+      ${pulse}
+      <polygon points="${s},${s*.15} ${s*1.88},${s*1.88} ${s*.12},${s*1.88}"
+        fill="url(#sg${sev})" opacity=".9" filter="url(#glow2)"/>
+      <polygon points="${s},${s*.15} ${s*1.88},${s*1.88} ${s*.12},${s*1.88}"
+        fill="none" stroke="${c}" stroke-width="2" opacity=".8"/>
+      <text x="${s}" y="${s*1.55}" text-anchor="middle" font-size="${s*.55}" font-family="serif" fill="white">⛰️</text>
+    </svg>`,
+    className:'', iconSize:[s*2,s*2], iconAnchor:[s,s]
+  });
+}
+
+// ── POPUP BUILDER ──
+function buildPopup(ev) {
+  const sevCls = 'sev-'+ev.sev;
+  const sevLbl = ev.sev==='alta'?'ALTA':ev.sev==='media'?'MEDIA':'BAJA';
+  const extra = ev.type==='flood'
+    ? `<div class="popup-row"><span class="pk">Área afectada</span><span class="pv">${ev.area}</span></div>`
+    : `<div class="popup-row"><span class="pk">Volumen estimado</span><span class="pv">${ev.vol}</span></div>`;
+  return `<div class="popup-inner">
+    <div class="popup-header">
+      <div class="popup-icon ${ev.type}">${ev.type==='flood'?'💧':'⛰️'}</div>
+      <div>
+        <div class="popup-title">${ev.loc}</div>
+        <div class="popup-type">${ev.type==='flood'?'INUNDACIÓN':'DESLIZAMIENTO'} · ${ev.fecha}</div>
+      </div>
+    </div>
+    <div class="popup-rows">
+      <div class="popup-row"><span class="pk">Hora del evento</span><span class="pv">${ev.hora}</span></div>
+      <div class="popup-row"><span class="pk">Personas afectadas</span><span class="pv">${ev.afectados.toLocaleString()}</span></div>
+      ${extra}
+      <div class="popup-row"><span class="pk">Causa principal</span><span class="pv" style="font-family:var(--font-body);font-size:10px;max-width:140px;text-align:right">${ev.causa}</span></div>
+    </div>
+    <div class="popup-sev"><span class="ec-sev ${sevCls}">SEVERIDAD ${sevLbl}</span></div>
+    <div class="popup-desc">${ev.desc}</div>
+  </div>`;
+}
+
+// ── BUILD MARKERS ──
+let markers = {};
+EVENTS.forEach(ev => {
+  const icon = ev.type === 'flood' ? floodIcon(ev.sev) : slideIcon(ev.sev);
+  const m = L.marker([ev.lat,ev.lng], {icon})
+    .bindPopup(buildPopup(ev), {maxWidth:280, className:'custom-popup'})
+    .bindTooltip(`<b>${ev.type==='flood'?'💧 Inundación':'⛰️ Deslizamiento'}</b> — ${ev.loc}<br><small>${ev.fecha} · Severidad ${ev.sev.toUpperCase()}</small>`,
+      {direction:'top', offset:[0,-10]});
+  markers[ev.id] = m;
+  if (ev.type === 'flood') clusterFlood.addLayer(m);
+  else clusterSlide.addLayer(m);
+});
+
+map.addLayer(clusterFlood);
+map.addLayer(clusterSlide);
+
+function toggleLayer(type) {
+  if(type==='flood') {
+    document.getElementById('chk-flood').checked ? map.addLayer(clusterFlood) : map.removeLayer(clusterFlood);
+  } else {
+    document.getElementById('chk-slide').checked ? map.addLayer(clusterSlide) : map.removeLayer(clusterSlide);
+  }
+}
+
+// ── COORDS BAR ──
+map.on('mousemove', e => {
+  document.getElementById('lat-val').textContent = e.latlng.lat.toFixed(4);
+  document.getElementById('lng-val').textContent = e.latlng.lng.toFixed(4);
+});
+map.on('zoom', () => {
+  document.getElementById('zoom-val').textContent = map.getZoom();
+});
+
+// ── PANEL TOGGLES ──
+function togglePanel(side) {
+  const p = document.getElementById('panel-'+side);
+  const ic = document.getElementById('icon-'+side);
+  p.classList.toggle('collapsed');
+  if(side==='left')  ic.className = p.classList.contains('collapsed') ? 'fa fa-chevron-right':'fa fa-chevron-left';
+  if(side==='right') ic.className = p.classList.contains('collapsed') ? 'fa fa-chevron-left':'fa fa-chevron-right';
+  setTimeout(()=>map.invalidateSize(),320);
+}
+
+// ── COLLAPSIBLE SECTIONS ──
+function toggleSection(hdr) {
+  hdr.classList.toggle('open');
+  const body = hdr.nextElementSibling;
+  body.classList.toggle('closed');
+}
+
+// ── EVENTS LIST ──
+let currentFilter = 'all';
+function renderEvents(filter) {
+  const list = document.getElementById('events-list');
+  const evs = EVENTS.filter(e => filter==='all' || e.type===filter)
+    .sort((a,b)=>b.id-a.id);
+  list.innerHTML = evs.map(ev=>`
+    <div class="event-card ${ev.type}" onclick="focusEvent(${ev.id})">
+      <div class="ec-head">
+        <div class="ec-type">${ev.type==='flood'?'💧 Inundación':'⛰️ Deslizamiento'}</div>
+        <div class="ec-sev sev-${ev.sev}">${ev.sev.toUpperCase()}</div>
+      </div>
+      <div class="ec-loc">${ev.loc}</div>
+      <div class="ec-date">${ev.fecha} · ${ev.hora}</div>
+      <div class="ec-meta">
+        <span class="ec-tag">👥 ${ev.afectados.toLocaleString()}</span>
+        <span class="ec-tag">${ev.type==='flood'?'📐 '+ev.area:'📦 '+ev.vol}</span>
+      </div>
+    </div>`).join('');
+}
+renderEvents('all');
+
+function filterEvents(f) {
+  currentFilter = f;
+  document.querySelectorAll('.filter-chip').forEach(c=>c.className='filter-chip');
+  if(f==='all')   document.getElementById('fc-all').className='filter-chip active-a';
+  if(f==='flood') document.getElementById('fc-flood').className='filter-chip active-f';
+  if(f==='slide') document.getElementById('fc-slide').className='filter-chip active-s';
+  renderEvents(f);
+}
+
+function focusEvent(id) {
+  const ev = EVENTS.find(e=>e.id===id);
+  if(!ev) return;
+  map.flyTo([ev.lat,ev.lng], 12, {duration:1.2});
+  setTimeout(()=>{
+    const m = markers[ev.id];
+    if(m) m.openPopup();
+  },1300);
+}
+
+// ── SEARCH ──
+function filterSearch(q) {
+  if(!q) { renderEvents(currentFilter); return; }
+  q = q.toLowerCase();
+  const filtered = EVENTS.filter(e=>
+    e.loc.toLowerCase().includes(q)||e.causa.toLowerCase().includes(q)||e.desc.toLowerCase().includes(q)
+  );
+  const list = document.getElementById('events-list');
+  list.innerHTML = filtered.map(ev=>`
+    <div class="event-card ${ev.type}" onclick="focusEvent(${ev.id})">
+      <div class="ec-head">
+        <div class="ec-type">${ev.type==='flood'?'💧 Inundación':'⛰️ Deslizamiento'}</div>
+        <div class="ec-sev sev-${ev.sev}">${ev.sev.toUpperCase()}</div>
+      </div>
+      <div class="ec-loc">${ev.loc}</div>
+      <div class="ec-date">${ev.fecha} · ${ev.hora}</div>
+    </div>`).join('') || '<div style="text-align:center;color:var(--text-dim);padding:20px;font-size:12px">Sin resultados</div>';
+}
+
+// ── STATUS BAR ──
+setTimeout(()=>{
+  document.getElementById('status-bar').textContent = '42 eventos cargados · Sistema operativo';
+  setTimeout(()=>{
+    document.getElementById('status-bar').style.opacity='0';
+  },3000);
+},1200);
+</script>
+</body>
+</html>
